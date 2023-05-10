@@ -3,25 +3,29 @@ using System.Text.Json.Serialization;
 
 while (true) {
     var message = Console.ReadLine();
+    if (string.IsNullOrEmpty(message)) continue;
+
     Console.Error.WriteLine($"Message received: {message}");
-    HandleMessage(message);
+    var _ = HandleMessageAsync(message);
 }
 
-async void HandleMessage(string message)
+async Task HandleMessageAsync(string message)
 {
     var options = new JsonSerializerOptions();
     options.Converters.Add(new MaelstromPayloadConverter());
     var foo = JsonSerializer.Deserialize<MaelstromEnvelope>(message, options);
     
-    if (foo.Body is InitMessage initMessage)
-        HandleInitMessage(foo, initMessage, options);
+    if (foo is null)
+        throw new Exception("NOOOOOO!");
+    else if (foo.Body is InitMessage initMessage)
+        await HandleInitMessageAsync(foo, initMessage, options);
     else if (foo.Body is EchoMessage echoMessage)
-        HandleEchoMessage(foo, echoMessage, options);
+        await HandleEchoMessageAsync(foo, echoMessage, options);
     else
         Console.Error.WriteLine("HERE11111");
 }
 
-async void HandleInitMessage(MaelstromEnvelope envelope, InitMessage message, JsonSerializerOptions options)
+async Task HandleInitMessageAsync(MaelstromEnvelope envelope, InitMessage message, JsonSerializerOptions options)
 {
     Console.Error.WriteLine($"INIT MESSAGE RECEIVED NodeId {message.NodeId} NodeIds {string.Join(",", message.NodeIds)}!");
 
@@ -36,14 +40,13 @@ async void HandleInitMessage(MaelstromEnvelope envelope, InitMessage message, Js
         }
     };
 
-
     var serialized = JsonSerializer.Serialize(reply, options);
 
     Console.Error.WriteLine($"SENDING INIT REPLY {serialized}");
-    Console.WriteLine(serialized);
+    Console.Out.WriteLine(serialized);
 }
 
-async void HandleEchoMessage(MaelstromEnvelope envelope, EchoMessage message, JsonSerializerOptions options)
+async Task HandleEchoMessageAsync(MaelstromEnvelope envelope, EchoMessage message, JsonSerializerOptions options)
 {
     Console.Error.WriteLine($"ECHO MESSAGE RECEIVED {message.Echo}");
 
@@ -62,7 +65,7 @@ async void HandleEchoMessage(MaelstromEnvelope envelope, EchoMessage message, Js
     var serialized = JsonSerializer.Serialize(reply, options);
 
     Console.Error.WriteLine($"SENDING ECHO REPLY {serialized}");
-    Console.WriteLine(serialized);
+    Console.Out.WriteLine(serialized);
 }
 
 class MaelstromPayloadConverter : JsonConverter<MaelstromPayload>
