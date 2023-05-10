@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
+using Vortex.Messages;
 
 while (true) {
     var message = Console.ReadLine();
@@ -11,29 +12,34 @@ while (true) {
 
 async Task HandleMessageAsync(string message)
 {
-    var options = new JsonSerializerOptions();
-    options.Converters.Add(new MaelstromPayloadConverter());
-    var foo = JsonSerializer.Deserialize<MaelstromEnvelope>(message, options);
+    var deserializerOptions = new JsonSerializerOptions();
+    deserializerOptions.Converters.Add(new RequestConverter());
+    var request = JsonSerializer.Deserialize<RequestEnvelope>(message, deserializerOptions);
+
+    var serializerOptions = new JsonSerializerOptions();
+    serializerOptions.Converters.Add(new ResponseConverter());
     
-    if (foo is null)
+    if (request is null)
         throw new Exception("NOOOOOO!");
-    else if (foo.Body is InitMessage initMessage)
-        await HandleInitMessageAsync(foo, initMessage, options);
-    else if (foo.Body is EchoMessage echoMessage)
-        await HandleEchoMessageAsync(foo, echoMessage, options);
+    else if (request.Body is InitCommand initCommand)
+        await HandleInitMessageAsync(request, initCommand, serializerOptions);
+    else if (request.Body is EchoCommand echoCommand)
+        await HandleEchoMessageAsync(request, echoCommand, serializerOptions);
+    else if (request.Body is GenerateCommand generateCommand)
+        await HandleGenerateCommandAsync(request, generateCommand, serializerOptions);
     else
         Console.Error.WriteLine("HERE11111");
 }
 
-async Task HandleInitMessageAsync(MaelstromEnvelope envelope, InitMessage message, JsonSerializerOptions options)
+async Task HandleInitMessageAsync(RequestEnvelope envelope, InitCommand message, JsonSerializerOptions options)
 {
     Console.Error.WriteLine($"INIT MESSAGE RECEIVED NodeId {message.NodeId} NodeIds {string.Join(",", message.NodeIds)}!");
 
-    var reply = new MaelstromEnvelope()
+    var reply = new ResponseEnvelope()
     {
         Source = envelope.Destination,
         Destination = envelope.Source,
-        Body = new InitReply()
+        Body = new InitResponse()
         {
             Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
             InReplyTo = message.Id
@@ -46,15 +52,15 @@ async Task HandleInitMessageAsync(MaelstromEnvelope envelope, InitMessage messag
     Console.Out.WriteLine(serialized);
 }
 
-async Task HandleEchoMessageAsync(MaelstromEnvelope envelope, EchoMessage message, JsonSerializerOptions options)
+async Task HandleEchoMessageAsync(RequestEnvelope envelope, EchoCommand message, JsonSerializerOptions options)
 {
     Console.Error.WriteLine($"ECHO MESSAGE RECEIVED {message.Echo}");
 
-    var reply = new MaelstromEnvelope()
+    var reply = new ResponseEnvelope()
     {
         Source = envelope.Destination,
         Destination = envelope.Source,
-        Body = new EchoReply()
+        Body = new EchoResponse()
         {
             Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
             Echo = message.Echo,
@@ -68,20 +74,43 @@ async Task HandleEchoMessageAsync(MaelstromEnvelope envelope, EchoMessage messag
     Console.Out.WriteLine(serialized);
 }
 
-class MaelstromPayloadConverter : JsonConverter<MaelstromPayload>
+async Task HandleGenerateCommandAsync(RequestEnvelope envelope, GenerateCommand message, JsonSerializerOptions options)
 {
-    public override MaelstromPayload? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    Console.Error.WriteLine($"GENERATE MESSAGE RECEIVED");
+
+    var reply = new ResponseEnvelope()
+    {
+        Source = envelope.Destination,
+        Destination = envelope.Source,
+        Body = new GenerateResponse()
+        {
+            Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
+            GeneratedId = Guid.NewGuid().ToString(),
+            InReplyTo = message.Id
+        }
+    };
+
+    var serialized = JsonSerializer.Serialize(reply, options);
+
+    Console.Error.WriteLine($"SENDING GENERATE REPLY {serialized}");
+    Console.Out.WriteLine(serialized);
+}
+
+class RequestConverter : JsonConverter<Request>
+{
+    public override Request? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
         var clonedReader = reader;
 
-        var payload = JsonSerializer.Deserialize<MaelstromPayload>(ref clonedReader);
+        var payload = JsonSerializer.Deserialize<Request>(ref clonedReader);
         
         try
         {
-            MaelstromPayload? deserialized = payload.Type switch
+            Request? deserialized = payload.Type switch
             {
-                "init" => JsonSerializer.Deserialize<InitMessage>(ref reader),
-                "echo" => JsonSerializer.Deserialize<EchoMessage>(ref reader),
+                "init" => JsonSerializer.Deserialize<InitCommand>(ref reader),
+                "echo" => JsonSerializer.Deserialize<EchoCommand>(ref reader),
+                "generate" => JsonSerializer.Deserialize<GenerateCommand>(ref reader),
                 _ => throw new JsonException()
             };
 
@@ -94,72 +123,30 @@ class MaelstromPayloadConverter : JsonConverter<MaelstromPayload>
         }
     }
 
-    public override void Write(Utf8JsonWriter writer, MaelstromPayload value, JsonSerializerOptions options)
+    public override void Write(Utf8JsonWriter writer, Request value, JsonSerializerOptions options)
     {
-        if (value is InitReply initReply)
-            JsonSerializer.Serialize<InitReply>(writer, initReply);
-        else if (value is EchoReply echoReply)
-            JsonSerializer.Serialize<EchoReply>(writer, echoReply);
-        else
-            throw new Exception("UNEXPECTED RESPONSE TYPE!");
+        throw new NotImplementedException();
     }
 }
 
-class MaelstromEnvelope
+class ResponseConverter : JsonConverter<Response>
 {
-    [JsonPropertyName("src")]
-    public string Source { get; set; }
+    public override Response? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        throw new NotImplementedException();
+    }
 
-    [JsonPropertyName("dest" )]
-    public string Destination { get; set; }
-
-    [JsonPropertyName("body")]
-    public MaelstromPayload Body { get; set; }
-}
-
-class MaelstromPayload
-{
-    [JsonPropertyName("type")]
-    public string Type { get; set; }
-
-    [JsonPropertyName("msg_id")]
-    public int Id { get; set; }
-}
-
-class InitMessage : MaelstromPayload
-{
-    [JsonPropertyName("node_id")]
-    public string NodeId { get; set; }
-
-    [JsonPropertyName("node_ids")]
-    public string[] NodeIds { get; set; }
-}
-
-class InitReply : MaelstromPayload
-{
-    [JsonPropertyName("type")]
-    public string Type => "init_ok";
-    
-    [JsonPropertyName("in_reply_to")]
-    public int InReplyTo { get; set; }
-}
-
-class EchoMessage : MaelstromPayload
-{
-    [JsonPropertyName("echo")]
-    public string Echo { get; set; }
-}
-
-class EchoReply : MaelstromPayload
-{
-    [JsonPropertyName("type")]
-    public string Type => "echo_ok";
-    
-    [JsonPropertyName("in_reply_to")]
-    public int InReplyTo { get; set; }
-
-    [JsonPropertyName("echo")]
-    public string Echo { get; set; }
+    public override void Write(Utf8JsonWriter writer, Response value, JsonSerializerOptions options)
+    {
+        if (value is InitResponse initReply)
+            JsonSerializer.Serialize<InitResponse>(writer, initReply);
+        else if (value is EchoResponse echoReply)
+            JsonSerializer.Serialize<EchoResponse>(writer, echoReply);
+        else if (value is GenerateResponse generateResponse)
+            JsonSerializer.Serialize<GenerateResponse>(writer, generateResponse);
+        else
+            throw new Exception("UNEXPECTED RESPONSE TYPE!");
+    }
 }
 
 static class Globals
