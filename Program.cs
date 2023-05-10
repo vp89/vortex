@@ -4,61 +4,160 @@ using System.Text.Json.Serialization;
 while (true) {
     var message = Console.ReadLine();
     Console.Error.WriteLine($"Message received: {message}");
-    HandleMessageAsync(message);
+    HandleMessage(message);
 }
 
-async void HandleMessageAsync(string message) {
-    try {
-        var deserializedMessage = JsonSerializer.Deserialize<MaelstromMessage>(message);
+async void HandleMessage(string message)
+{
+    var options = new JsonSerializerOptions();
+    options.Converters.Add(new MaelstromPayloadConverter());
+    var foo = JsonSerializer.Deserialize<MaelstromEnvelope>(message, options);
+    
+    if (foo.Body is InitMessage initMessage)
+        HandleInitMessage(foo, initMessage, options);
+    else if (foo.Body is EchoMessage echoMessage)
+        HandleEchoMessage(foo, echoMessage, options);
+    else
+        Console.Error.WriteLine("HERE11111");
+}
 
-        // build reply code
-        if (deserializedMessage?.Body is null) return;
+async void HandleInitMessage(MaelstromEnvelope envelope, InitMessage message, JsonSerializerOptions options)
+{
+    Console.Error.WriteLine($"INIT MESSAGE RECEIVED NodeId {message.NodeId} NodeIds {string.Join(",", message.NodeIds)}!");
 
-        var clonedBody = new Dictionary<string, object>(deserializedMessage.Body);
-
-        var messageType = clonedBody["type"];
-        var messageId = clonedBody["msg_id"];
-
-        Console.Error.WriteLine(
-            $"Received message {messageId} of type {messageType} from {deserializedMessage.Source}");
-
-        var replyMessageId = Interlocked.Increment(ref Globals.MESSAGE_ID);
-        var replyMessageType = messageType += "_ok";
-
-        clonedBody["msg_id"] = replyMessageId;
-        clonedBody["type"] = replyMessageType;
-        clonedBody["in_reply_to"] = deserializedMessage.Body["msg_id"];
-
-        var reply = new MaelstromMessage()
+    var reply = new MaelstromEnvelope()
+    {
+        Source = envelope.Destination,
+        Destination = envelope.Source,
+        Body = new InitReply()
         {
-            Source = deserializedMessage.Destination,
-            Destination = deserializedMessage.Source,
-            Body = clonedBody
-        };
+            Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
+            InReplyTo = message.Id
+        }
+    };
 
-        var serializedReply = JsonSerializer.Serialize(reply);
-        Console.Error.WriteLine($"Sending message {replyMessageId} of type {replyMessageType} as reply: {serializedReply}");
-        Console.WriteLine(serializedReply);
-    } catch (Exception e) {
-        Console.Error.WriteLine($"ERROR - {e.Message}");
+
+    var serialized = JsonSerializer.Serialize(reply, options);
+
+    Console.Error.WriteLine($"SENDING INIT REPLY {serialized}");
+    Console.WriteLine(serialized);
+}
+
+async void HandleEchoMessage(MaelstromEnvelope envelope, EchoMessage message, JsonSerializerOptions options)
+{
+    Console.Error.WriteLine($"ECHO MESSAGE RECEIVED {message.Echo}");
+
+    var reply = new MaelstromEnvelope()
+    {
+        Source = envelope.Destination,
+        Destination = envelope.Source,
+        Body = new EchoReply()
+        {
+            Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
+            Echo = message.Echo,
+            InReplyTo = message.Id
+        }
+    };
+
+    var serialized = JsonSerializer.Serialize(reply, options);
+
+    Console.Error.WriteLine($"SENDING ECHO REPLY {serialized}");
+    Console.WriteLine(serialized);
+}
+
+class MaelstromPayloadConverter : JsonConverter<MaelstromPayload>
+{
+    public override MaelstromPayload? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var clonedReader = reader;
+
+        var payload = JsonSerializer.Deserialize<MaelstromPayload>(ref clonedReader);
+        
+        try
+        {
+            MaelstromPayload? deserialized = payload.Type switch
+            {
+                "init" => JsonSerializer.Deserialize<InitMessage>(ref reader),
+                "echo" => JsonSerializer.Deserialize<EchoMessage>(ref reader),
+                _ => throw new JsonException()
+            };
+
+            return deserialized;
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine("herwekrw235");
+            throw;
+        }
+    }
+
+    public override void Write(Utf8JsonWriter writer, MaelstromPayload value, JsonSerializerOptions options)
+    {
+        if (value is InitReply initReply)
+            JsonSerializer.Serialize<InitReply>(writer, initReply);
+        else if (value is EchoReply echoReply)
+            JsonSerializer.Serialize<EchoReply>(writer, echoReply);
+        else
+            throw new Exception("UNEXPECTED RESPONSE TYPE!");
     }
 }
 
-class MaelstromMessage
+class MaelstromEnvelope
 {
     [JsonPropertyName("src")]
     public string Source { get; set; }
 
     [JsonPropertyName("dest" )]
     public string Destination { get; set; }
-    
-    [JsonPropertyName("id")]
-    public int Id { get; set; }
 
     [JsonPropertyName("body")]
-    public Dictionary<string, object> Body { get; set; }
+    public MaelstromPayload Body { get; set; }
 }
 
+class MaelstromPayload
+{
+    [JsonPropertyName("type")]
+    public string Type { get; set; }
+
+    [JsonPropertyName("msg_id")]
+    public int Id { get; set; }
+}
+
+class InitMessage : MaelstromPayload
+{
+    [JsonPropertyName("node_id")]
+    public string NodeId { get; set; }
+
+    [JsonPropertyName("node_ids")]
+    public string[] NodeIds { get; set; }
+}
+
+class InitReply : MaelstromPayload
+{
+    [JsonPropertyName("type")]
+    public string Type => "init_ok";
+    
+    [JsonPropertyName("in_reply_to")]
+    public int InReplyTo { get; set; }
+}
+
+class EchoMessage : MaelstromPayload
+{
+    [JsonPropertyName("echo")]
+    public string Echo { get; set; }
+}
+
+class EchoReply : MaelstromPayload
+{
+    [JsonPropertyName("type")]
+    public string Type => "echo_ok";
+    
+    [JsonPropertyName("in_reply_to")]
+    public int InReplyTo { get; set; }
+
+    [JsonPropertyName("echo")]
+    public string Echo { get; set; }
+}
 
 static class Globals
 {
