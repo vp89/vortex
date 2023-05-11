@@ -86,3 +86,40 @@ class GenerateResponse : Response
     [JsonPropertyName("id")]
     public string GeneratedId { get; set; }
 }
+
+class TopologyCommand : Request
+{
+    [JsonPropertyName("topology")]
+    public Dictionary<string, string[]> Topology { get; set; }
+}
+
+class TopologyResponse : Response
+{
+    [JsonPropertyName("type")]
+    public override string Type => "topology_ok";
+}
+
+class BroadcastCommand : Request
+{
+    [JsonPropertyName("message")]
+    public object Message { get; set; }
+}
+
+class BroadcastResponse : Response
+{
+    [JsonPropertyName("type")]
+    public override string Type => "broadcast_ok";
+}
+
+class ReadCommand : Request
+{
+}
+
+class ReadResponse : Response
+{
+    [JsonPropertyName("type")]
+    public override string Type => "read_ok";
+
+    [JsonPropertyName("messages")]
+    public object[] Messages { get; set; }
+}

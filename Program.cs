@@ -27,6 +27,12 @@ async Task HandleMessageAsync(string message)
         await HandleEchoMessageAsync(request, echoCommand, serializerOptions);
     else if (request.Body is GenerateCommand generateCommand)
         await HandleGenerateCommandAsync(request, generateCommand, serializerOptions);
+    else if (request.Body is TopologyCommand topologyCommand)
+        await HandleTopologyCommandAsync(request, topologyCommand, serializerOptions);
+    else if (request.Body is BroadcastCommand broadcastCommand)
+        await HandleBroadcastCommandAsync(request, broadcastCommand, serializerOptions);
+    else if (request.Body is ReadCommand readCommand)
+        await HandleReadCommandAsync(request, readCommand, serializerOptions);
     else
         Console.Error.WriteLine("HERE11111");
 }
@@ -34,6 +40,8 @@ async Task HandleMessageAsync(string message)
 async Task HandleInitMessageAsync(RequestEnvelope envelope, InitCommand message, JsonSerializerOptions options)
 {
     Console.Error.WriteLine($"INIT MESSAGE RECEIVED NodeId {message.NodeId} NodeIds {string.Join(",", message.NodeIds)}!");
+
+    Globals.NODE_ID = message.NodeId;
 
     var reply = new ResponseEnvelope()
     {
@@ -96,6 +104,78 @@ async Task HandleGenerateCommandAsync(RequestEnvelope envelope, GenerateCommand 
     Console.Out.WriteLine(serialized);
 }
 
+async Task HandleTopologyCommandAsync(RequestEnvelope envelope, TopologyCommand message, JsonSerializerOptions options)
+{
+    Console.Error.WriteLine($"TOPOLOGY MESSAGE RECEIVED");
+
+    if (message.Topology.ContainsKey(Globals.NODE_ID))
+    {
+        Globals.NEIGHBOR_NODES = message.Topology[Globals.NODE_ID];
+        Console.Error.WriteLine($"My neighbors are {string.Join(",", Globals.NEIGHBOR_NODES)}");
+    }
+
+    var reply = new ResponseEnvelope()
+    {
+        Source = envelope.Destination,
+        Destination = envelope.Source,
+        Body = new TopologyResponse()
+        {
+            Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
+            InReplyTo = message.Id
+        }
+    };
+
+    var serialized = JsonSerializer.Serialize(reply, options);
+
+    Console.Error.WriteLine($"SENDING TOPOLOGY REPLY {serialized}");
+    Console.Out.WriteLine(serialized);
+}
+
+async Task HandleBroadcastCommandAsync(RequestEnvelope envelope, BroadcastCommand message, JsonSerializerOptions options)
+{
+    Console.Error.WriteLine($"BROADCAST MESSAGE RECEIVED");
+
+    Globals.MESSAGES.Add(message.Message);
+
+    var reply = new ResponseEnvelope()
+    {
+        Source = envelope.Destination,
+        Destination = envelope.Source,
+        Body = new BroadcastResponse()
+        {
+            Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
+            InReplyTo = message.Id
+        }
+    };
+
+    var serialized = JsonSerializer.Serialize(reply, options);
+
+    Console.Error.WriteLine($"SENDING BROADCAST REPLY {serialized}");
+    Console.Out.WriteLine(serialized);
+}
+
+async Task HandleReadCommandAsync(RequestEnvelope envelope, ReadCommand message, JsonSerializerOptions options)
+{
+    Console.Error.WriteLine($"READ MESSAGE RECEIVED");
+
+    var reply = new ResponseEnvelope()
+    {
+        Source = envelope.Destination,
+        Destination = envelope.Source,
+        Body = new ReadResponse()
+        {
+            Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
+            InReplyTo = message.Id,
+            Messages = Globals.MESSAGES.ToArray() // TODO?
+        }
+    };
+
+    var serialized = JsonSerializer.Serialize(reply, options);
+
+    Console.Error.WriteLine($"SENDING READ REPLY {serialized}");
+    Console.Out.WriteLine(serialized);
+}
+
 class RequestConverter : JsonConverter<Request>
 {
     public override Request? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
@@ -111,6 +191,9 @@ class RequestConverter : JsonConverter<Request>
                 "init" => JsonSerializer.Deserialize<InitCommand>(ref reader),
                 "echo" => JsonSerializer.Deserialize<EchoCommand>(ref reader),
                 "generate" => JsonSerializer.Deserialize<GenerateCommand>(ref reader),
+                "topology" => JsonSerializer.Deserialize<TopologyCommand>(ref reader),
+                "broadcast" => JsonSerializer.Deserialize<BroadcastCommand>(ref reader),
+                "read" => JsonSerializer.Deserialize<ReadCommand>(ref reader),
                 _ => throw new JsonException()
             };
 
@@ -144,6 +227,8 @@ class ResponseConverter : JsonConverter<Response>
             JsonSerializer.Serialize<EchoResponse>(writer, echoReply);
         else if (value is GenerateResponse generateResponse)
             JsonSerializer.Serialize<GenerateResponse>(writer, generateResponse);
+        else if (value is TopologyResponse topologyResponse)
+            JsonSerializer.Serialize<TopologyResponse>(writer, topologyResponse);
         else
             throw new Exception("UNEXPECTED RESPONSE TYPE!");
     }
@@ -152,4 +237,7 @@ class ResponseConverter : JsonConverter<Response>
 static class Globals
 {
     public static int MESSAGE_ID = 0;
+    public static string NODE_ID = null;
+    public static string[] NEIGHBOR_NODES = null;
+    public static List<object> MESSAGES = new List<object>();
 }
