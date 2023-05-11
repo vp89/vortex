@@ -7,7 +7,7 @@ while (true) {
     if (string.IsNullOrEmpty(message)) continue;
 
     Console.Error.WriteLine($"Message received: {message}");
-    var _ = HandleMessageAsync(message);
+    await HandleMessageAsync(message);
 }
 
 async Task HandleMessageAsync(string message)
@@ -17,6 +17,7 @@ async Task HandleMessageAsync(string message)
     var request = JsonSerializer.Deserialize<RequestEnvelope>(message, deserializerOptions);
 
     var serializerOptions = new JsonSerializerOptions();
+    serializerOptions.Converters.Add(new RequestConverter());
     serializerOptions.Converters.Add(new ResponseConverter());
     
     if (request is null)
@@ -50,7 +51,7 @@ async Task HandleInitMessageAsync(RequestEnvelope envelope, InitCommand message,
         Body = new InitResponse()
         {
             Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
-            InReplyTo = message.Id
+            InReplyTo = message.Id.Value
         }
     };
 
@@ -72,7 +73,7 @@ async Task HandleEchoMessageAsync(RequestEnvelope envelope, EchoCommand message,
         {
             Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
             Echo = message.Echo,
-            InReplyTo = message.Id
+            InReplyTo = message.Id.Value
         }
     };
 
@@ -94,7 +95,7 @@ async Task HandleGenerateCommandAsync(RequestEnvelope envelope, GenerateCommand 
         {
             Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
             GeneratedId = Guid.NewGuid().ToString(),
-            InReplyTo = message.Id
+            InReplyTo = message.Id.Value
         }
     };
 
@@ -121,7 +122,7 @@ async Task HandleTopologyCommandAsync(RequestEnvelope envelope, TopologyCommand 
         Body = new TopologyResponse()
         {
             Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
-            InReplyTo = message.Id
+            InReplyTo = message.Id.Value
         }
     };
 
@@ -135,23 +136,47 @@ async Task HandleBroadcastCommandAsync(RequestEnvelope envelope, BroadcastComman
 {
     Console.Error.WriteLine($"BROADCAST MESSAGE RECEIVED");
 
-    Globals.MESSAGES.Add(message.Message);
-
-    var reply = new ResponseEnvelope()
+    // only gossip if the message is new to us
+    if (Globals.MESSAGES.Add(message.Message))
     {
-        Source = envelope.Destination,
-        Destination = envelope.Source,
-        Body = new BroadcastResponse()
+        foreach (var neighbor in Globals.NEIGHBOR_NODES)
         {
-            Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
-            InReplyTo = message.Id
+            var gossip = new RequestEnvelope()
+            {
+                Source = envelope.Destination,
+                Destination = neighbor,
+                Body = new BroadcastCommand()
+                {
+                    Type = "broadcast", // TODO?
+                    Message = message.Message
+                }
+            };
+
+            var serialized = JsonSerializer.Serialize(gossip, options);
+            Console.Error.WriteLine($"SENDING BROADCAST GOSSIP TO {neighbor}");
+            Console.Out.WriteLine(serialized);
         }
-    };
+    }
 
-    var serialized = JsonSerializer.Serialize(reply, options);
+    // only reply if there is a msg_id present, otherwise it's inter-service gossip
+    if (message.Id.HasValue)
+    {
+        var reply = new ResponseEnvelope()
+        {
+            Source = envelope.Destination,
+            Destination = envelope.Source,
+            Body = new BroadcastResponse()
+            {
+                Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
+                InReplyTo = message.Id.Value
+            }
+        };
 
-    Console.Error.WriteLine($"SENDING BROADCAST REPLY {serialized}");
-    Console.Out.WriteLine(serialized);
+        var serialized = JsonSerializer.Serialize(reply, options);
+
+        Console.Error.WriteLine($"SENDING BROADCAST REPLY {serialized}");
+        Console.Out.WriteLine(serialized);
+    }
 }
 
 async Task HandleReadCommandAsync(RequestEnvelope envelope, ReadCommand message, JsonSerializerOptions options)
@@ -165,7 +190,7 @@ async Task HandleReadCommandAsync(RequestEnvelope envelope, ReadCommand message,
         Body = new ReadResponse()
         {
             Id = Interlocked.Increment(ref Globals.MESSAGE_ID),
-            InReplyTo = message.Id,
+            InReplyTo = message.Id.Value,
             Messages = Globals.MESSAGES.ToArray() // TODO?
         }
     };
@@ -208,7 +233,10 @@ class RequestConverter : JsonConverter<Request>
 
     public override void Write(Utf8JsonWriter writer, Request value, JsonSerializerOptions options)
     {
-        throw new NotImplementedException();
+        if (value is BroadcastCommand broadcastCommand)
+            JsonSerializer.Serialize<BroadcastCommand>(writer, broadcastCommand);
+        else
+            throw new Exception("UNEXPECTED REQUEST TYPE!");
     }
 }
 
@@ -229,6 +257,10 @@ class ResponseConverter : JsonConverter<Response>
             JsonSerializer.Serialize<GenerateResponse>(writer, generateResponse);
         else if (value is TopologyResponse topologyResponse)
             JsonSerializer.Serialize<TopologyResponse>(writer, topologyResponse);
+        else if (value is BroadcastResponse broadcastResponse)
+            JsonSerializer.Serialize<BroadcastResponse>(writer, broadcastResponse);
+        else if (value is ReadResponse readResponse)
+            JsonSerializer.Serialize<ReadResponse>(writer, readResponse);
         else
             throw new Exception("UNEXPECTED RESPONSE TYPE!");
     }
@@ -239,5 +271,5 @@ static class Globals
     public static int MESSAGE_ID = 0;
     public static string NODE_ID = null;
     public static string[] NEIGHBOR_NODES = null;
-    public static List<object> MESSAGES = new List<object>();
+    public static HashSet<int> MESSAGES = new HashSet<int>();
 }

@@ -23,7 +23,7 @@ class Request
     public string Type { get; set; }
 
     [JsonPropertyName("msg_id")]
-    public int Id { get; set; }
+    public int? Id { get; set; }
 }
 
 class ResponseEnvelope : BaseEnvelope
@@ -102,7 +102,7 @@ class TopologyResponse : Response
 class BroadcastCommand : Request
 {
     [JsonPropertyName("message")]
-    public object Message { get; set; }
+    public int Message { get; set; }
 }
 
 class BroadcastResponse : Response
@@ -121,5 +121,5 @@ class ReadResponse : Response
     public override string Type => "read_ok";
 
     [JsonPropertyName("messages")]
-    public object[] Messages { get; set; }
+    public int[] Messages { get; set; }
 }
